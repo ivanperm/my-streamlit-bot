@@ -1,83 +1,85 @@
 import streamlit as st
-from datetime import datetime
+import requests
+import os
+import uuid
 
-st.set_page_config(page_title="Школьный бот-помощник", page_icon="🤖")
-st.title("🤖 Школьный бот-помощник (демо на Streamlit)")
+st.set_page_config(page_title="ИИ-Бот (GigaChat)", page_icon="🤖")
+st.title("🤖 Школьный ИИ-Бот на GigaChat")
 
-st.caption("Демо без внешних API: логика ответа — простая, но чат работает как продукт.")
+AUTH_KEY = os.getenv("GIGACHAT_AUTH_KEY")
 
-# Настройки "роли" бота (их удобно давать школьникам для кастомизации)
+# === Получение access_token ===
+def get_access_token():
+    url = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
+    headers = {
+        "Authorization": f"Basic {AUTH_KEY}",
+        "RqUID": str(uuid.uuid4()),
+        "Content-Type": "application/x-www-form-urlencoded"
+    }
+    data = {
+        "scope": "GIGACHAT_API_PERS"
+    }
+
+    response = requests.post(url, headers=headers, data=data, verify=False)
+    response.raise_for_status()
+    return response.json()["access_token"]
+
+# === Запрос к GigaChat ===
+def ask_gigachat(messages, access_token):
+    url = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "model": "GigaChat",
+        "messages": messages,
+        "temperature": 0.7,
+        "max_tokens": 500
+    }
+
+    response = requests.post(url, headers=headers, json=payload, verify=False)
+    response.raise_for_status()
+    return response.json()["choices"][0]["message"]["content"]
+
+# === Интерфейс ===
+
 with st.sidebar:
     st.header("Настройки")
-    bot_name = st.text_input("Имя бота", "Учебный помощник")
-    mode = st.selectbox(
-        "Режим",
-        ["Объясняю тему", "Тренирую (вопросы)", "Проверяю ответ", "План подготовки"]
+    system_prompt = st.text_area(
+        "Системная инструкция",
+        "Ты полезный школьный помощник. Объясняй понятно и структурировано."
     )
-    subject = st.text_input("Предмет/тема", "История")
-    tone = st.selectbox("Тон", ["дружелюбный", "строгий", "нейтральный"])
-    st.divider()
-    st.write("Подсказка: это демо без ИИ. Зато можно быстро показать интерфейс и логику продукта.")
 
-# Память чата
 if "messages" not in st.session_state:
     st.session_state.messages = [
-        {"role": "assistant", "content": f"Привет! Я {bot_name}. Напиши тему или вопрос — начнём."}
+        {"role": "system", "content": system_prompt}
     ]
 
-# Рендер истории
-for m in st.session_state.messages:
-    with st.chat_message(m["role"]):
-        st.markdown(m["content"])
+# Отображение истории
+for msg in st.session_state.messages:
+    if msg["role"] != "system":
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
 
-def demo_reply(user_text: str) -> str:
-    """Простая логика ответов — имитация "умного" поведения."""
-    base = f"**{bot_name}** ({mode}, {tone}). Тема: *{subject}*.\n\n"
+prompt = st.chat_input("Напиши вопрос...")
 
-    if mode == "Объясняю тему":
-        return base + (
-            f"Вот объяснение по запросу: **{user_text}**\n\n"
-            "1) Суть в одном предложении.\n"
-            "2) Ключевые понятия (3–5 пунктов).\n"
-            "3) Пример.\n"
-            "4) Контрольный вопрос: *что из этого самое важное и почему?*"
-        )
-
-    if mode == "Тренирую (вопросы)":
-        return base + (
-            "Давай потренируемся. Ответь коротко:\n"
-            "1) Что это такое?\n"
-            "2) Зачем это нужно?\n"
-            "3) Приведи пример.\n\n"
-            f"Твой вход: **{user_text}** — можешь использовать как исходную тему."
-        )
-
-    if mode == "Проверяю ответ":
-        return base + (
-            "Проверка (демо):\n"
-            "- Что хорошо: есть попытка объяснить.\n"
-            "- Что добавить: определения и пример.\n"
-            "- Что уточнить: причинно-следственные связи.\n\n"
-            "Если хочешь, пришли ответ ещё раз в формате: *определение → 2 факта → пример*."
-        )
-
-    # План подготовки
-    return base + (
-        f"План подготовки по теме **{user_text}** на 3 шага:\n"
-        "1) Короткий конспект (10–15 мин)\n"
-        "2) 10 вопросов для самопроверки\n"
-        "3) Мини-тест + разбор ошибок\n\n"
-        f"Сегодня: {datetime.now().strftime('%d.%m.%Y')}"
-    )
-
-# Ввод пользователя
-prompt = st.chat_input("Напиши вопрос или тему…")
 if prompt:
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    answer = demo_reply(prompt)
-    st.session_state.messages.append({"role": "assistant", "content": answer})
-    with st.chat_message("assistant"):
-        st.markdown(answer)
+    try:
+        token = get_access_token()
+        reply = ask_gigachat(st.session_state.messages, token)
+
+        st.session_state.messages.append(
+            {"role": "assistant", "content": reply}
+        )
+
+        with st.chat_message("assistant"):
+            st.markdown(reply)
+
+    except Exception as e:
+        st.error(f"Ошибка: {e}")
